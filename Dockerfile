@@ -39,25 +39,9 @@ COPY --from=builder /build/ .
 # Logs directory writable by non-root user
 RUN mkdir -p /app/logs && chown penpot:penpot /app/logs
 
-# ── Environment defaults ──────────────────────────────────────
-ENV PENPOT_MCP_SERVER_LISTEN_ADDRESS=0.0.0.0
-ENV PENPOT_MCP_SERVER_ADDRESS=localhost
-ENV PENPOT_MCP_SERVER_PORT=4401
-ENV PENPOT_MCP_WEBSOCKET_PORT=4402
-ENV PENPOT_MCP_REPL_PORT=4403
-ENV PENPOT_MCP_PLUGIN_SERVER_HOST=0.0.0.0
-ENV PENPOT_MCP_LOG_LEVEL=info
-ENV PENPOT_MCP_LOG_DIR=/app/logs
-ENV PENPOT_MCP_REMOTE_MODE=false
-
-EXPOSE 4400 4401 4402 4403
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PENPOT_MCP_SERVER_PORT||4401)+'/').then(()=>process.exit(0)).catch(()=>process.exit(1))"
-
-USER penpot
-
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
+
+USER penpot
 
 ENTRYPOINT ["dumb-init", "--", "/app/entrypoint.sh"]
