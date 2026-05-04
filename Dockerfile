@@ -3,8 +3,6 @@
 # ============================================================
 FROM node:22-slim AS builder
 
-RUN corepack enable && corepack install
-
 WORKDIR /build
 
 # Install the official Penpot MCP package
@@ -12,6 +10,9 @@ RUN npm pack @penpot/mcp@stable && tar xzf penpot-mcp-*.tgz --strip-components=1
 
 # Restore pnpm-lock.yaml (shipped as pnpm-lock.dist.yaml in npm package)
 RUN [ -f pnpm-lock.dist.yaml ] && cp pnpm-lock.dist.yaml pnpm-lock.yaml || true
+
+# Enable corepack and install pnpm (requires package.json with packageManager field)
+RUN corepack enable && corepack install
 
 # Install all workspace dependencies (common + server + plugin)
 RUN pnpm install
