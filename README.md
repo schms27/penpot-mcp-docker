@@ -1,12 +1,10 @@
 # Penpot MCP Server — Docker
 
-Dockerized build of the official [Penpot MCP server](https://github.com/penpot/penpot/tree/develop/mcp) from the `penpot/penpot` repository.
-
-This project clones, builds, and packages the MCP server into a minimal Docker image so you can run it with a single command — no local Node.js, pnpm, or monorepo checkout required.
+Dockerized build of the official [@penpot/mcp](https://www.npmjs.com/package/@penpot/mcp) npm package. Run the Penpot MCP server and plugin server in a single container — designed to integrate directly into your self-hosted Penpot Docker stack.
 
 ## What It Does
 
-The Penpot MCP server exposes [Model Context Protocol](https://modelcontextprotocol.io/) endpoints that let AI assistants (Claude, Cursor, etc.) interact with Penpot design files. It provides tools for:
+The Penpot MCP server exposes [Model Context Protocol](https://modelcontextprotocol.io/) endpoints that let AI assistants (Claude, Cursor, Copilot, etc.) interact with Penpot design files. It provides tools for:
 
 - **`execute_code`** — Run Penpot Plugin API code in the browser context
 - **`high_level_overview`** — Get a summary of the current Penpot project
@@ -14,32 +12,37 @@ The Penpot MCP server exposes [Model Context Protocol](https://modelcontextproto
 - **`export_shape`** — Export shapes/components as images
 - **`import_image`** — Import images into Penpot projects
 
-The server communicates with the Penpot desktop/web app via a WebSocket bridge (the Penpot MCP plugin must be installed in Penpot).
+The container runs **two servers**:
+1. **MCP Server** — handles AI client connections (HTTP/SSE + WebSocket)
+2. **Plugin Server** — serves the MCP plugin to Penpot (`manifest.json`)
 
 ## How It Works
 
 ```mermaid
 flowchart LR
-    AI(["AI Assistant<br/><i>Claude · Cursor · etc.</i>"])
-    MCP["MCP Server<br/><b>Docker Container</b>"]
-    Plugin(["Penpot App<br/><i>+ MCP Plugin</i>"])
+    AI["AI Client<br/><i>Claude · Cursor · Copilot</i>"]
+    MCP["MCP Server<br/><b>:4401</b>"]
+    WS["WebSocket Bridge<br/><b>:4402</b>"]
+    Plugin["Plugin Server<br/><b>:4400</b>"]
+    Penpot["Penpot Frontend<br/><i>browser</i>"]
 
-    AI -- "HTTP :4401<br/>MCP Protocol" --> MCP
-    MCP -- "WebSocket :4402<br/>Task Bridge" --> Plugin
-    Plugin -. "Results" .-> MCP
-    MCP -. "Tool Response" .-> AI
+    AI -- "HTTP /mcp" --> MCP
+    MCP -- "WebSocket" --> WS
+    Penpot -- "load plugin" --> Plugin
+    Plugin -- "connects to" --> WS
 ```
 
 **Flow:**
-1. You open **Penpot** in your browser with the **MCP Plugin** installed
-2. The plugin connects to the Docker container via **WebSocket** (port 4402)
-3. Your **AI assistant** connects to the container via **HTTP** (port 4401)
+1. Penpot frontend loads the MCP plugin from the **Plugin Server** (port 4400)
+2. The plugin connects to the **WebSocket Bridge** (port 4402)
+3. Your **AI client** connects to the **MCP Server** (port 4401)
 4. When the AI needs to interact with your design, it sends an MCP request → the server forwards it to the plugin → the plugin executes in Penpot and returns the result
 
 ## Ports
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
+| 4400 | HTTP | Plugin server (`/manifest.json`) — loaded by Penpot frontend |
 | 4401 | HTTP/SSE | MCP client connections (`/mcp` streamable HTTP, `/sse` legacy) |
 | 4402 | WebSocket | Penpot plugin bridge |
 | 4403 | TCP/HTTP | REPL interface for debugging |
@@ -61,29 +64,65 @@ docker compose up -d
 docker logs penpot-mcp-server
 ```
 
-The server will be available at `http://localhost:4401/mcp`.
+The MCP server will be available at `http://localhost:4401/mcp` and the plugin at `http://localhost:4400/manifest.json`.
 
-## Available Tags
+## Integrating with Self-Hosted Penpot
 
-Docker images are tagged to match Penpot release versions. MCP support was introduced in Penpot **2.13.1**.
+Add the MCP service to your existing Penpot `docker-compose.yml`:
 
-| Tag | Penpot Version | Notes |
-|-----|---------------|-------|
-| `latest`, `2`, `2.13`, `2.13.3` | 2.13.3 | Current stable release |
-| `2.13.2` | 2.13.2 | |
-| `2.13.1` | 2.13.1 | First release with MCP |
-| `develop` | develop branch | Bleeding edge, may break |
+```yaml
+services:
+  # ... your existing penpot services (frontend, backend, exporter, etc.)
 
-```bash
-# Latest stable
-docker pull sebathi/penpot-mcp-docker:latest
-
-# Specific Penpot version
-docker pull sebathi/penpot-mcp-docker:2.13.3
-
-# Development branch
-docker pull sebathi/penpot-mcp-docker:develop
+  penpot-mcp:
+    image: sebathi/penpot-mcp-docker:latest
+    # Or build from source:
+    # build:
+    #   context: ./penpot-mcp-docker
+    container_name: penpot-mcp
+    ports:
+      - "4400:4400"  # Plugin server
+      - "4401:4401"  # MCP server
+      - "4402:4402"  # WebSocket bridge
+      - "4403:4403"  # REPL (optional)
+    environment:
+      - PENPOT_MCP_SERVER_LISTEN_ADDRESS=0.0.0.0
+      - PENPOT_MCP_SERVER_ADDRESS=penpot-mcp  # Use container name on shared network
+      - PENPOT_MCP_PLUGIN_SERVER_HOST=0.0.0.0
+    restart: unless-stopped
+    networks:
+      - penpot  # Must be on the same network as penpot-frontend
 ```
+
+Then in Penpot, load the plugin from:
+```
+http://penpot-mcp:4400/manifest.json
+```
+
+> **Note:** If Penpot frontend is served over HTTPS, Chromium-based browsers may block the connection to the HTTP plugin server. Use Firefox or configure your reverse proxy to serve the plugin over HTTPS as well.
+
+### Using with a Reverse Proxy
+
+If you run Penpot behind a reverse proxy (nginx, traefik, caddy), add routes for the MCP services:
+
+```nginx
+# nginx example
+location /mcp-plugin/ {
+    proxy_pass http://penpot-mcp:4400/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+
+location /mcp/ {
+    proxy_pass http://penpot-mcp:4401/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+Then load the plugin from `https://your-domain/mcp-plugin/manifest.json` and connect your AI client to `https://your-domain/mcp/`.
 
 ## Configuration
 
@@ -93,11 +132,18 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PENPOT_MCP_SERVER_LISTEN_ADDRESS` | `0.0.0.0` | Address the server binds to |
-| `PENPOT_MCP_SERVER_ADDRESS` | `localhost` | Hostname clients use to reach the server |
+| `PENPOT_MCP_SERVER_LISTEN_ADDRESS` | `0.0.0.0` | Address the MCP server binds to |
+| `PENPOT_MCP_SERVER_ADDRESS` | `localhost` | Hostname clients use to reach the server (used by plugin to construct WebSocket URL) |
 | `PENPOT_MCP_SERVER_PORT` | `4401` | HTTP/SSE port |
 | `PENPOT_MCP_WEBSOCKET_PORT` | `4402` | WebSocket port for plugin bridge |
 | `PENPOT_MCP_REPL_PORT` | `4403` | REPL debugging port |
+
+### Plugin Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PENPOT_MCP_PLUGIN_SERVER_PORT` | `4400` | Plugin server port |
+| `PENPOT_MCP_PLUGIN_SERVER_HOST` | `0.0.0.0` | Address the plugin server binds to |
 
 ### Logging
 
@@ -113,24 +159,6 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `PENPOT_MCP_REMOTE_MODE` | `false` | Disable local filesystem access |
 | `MULTI_USER` | `false` | Enable multi-user mode (also enables remote mode) |
 
-### Build-Time
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PENPOT_VERSION` | `develop` | Penpot release tag (`2.13.3`) or branch (`develop`, `mcp-prod`) |
-
-## Building a Specific Penpot Version
-
-```bash
-# Build from a release tag
-PENPOT_VERSION=2.13.3 docker compose build
-
-# Build from a branch
-PENPOT_VERSION=develop docker compose build
-```
-
-Or set `PENPOT_VERSION` in your `.env` file before building.
-
 ## Multi-User Mode
 
 Multi-user mode allows multiple clients to connect simultaneously, each with their own session. It also enables remote mode automatically.
@@ -139,41 +167,27 @@ Multi-user mode allows multiple clients to connect simultaneously, each with the
 MULTI_USER=true docker compose up -d
 ```
 
-## MCP Client Configuration
+> **Warning:** Multi-user mode is under development and not yet fully integrated. Tools that read from or write to the local file system (import/export) are not supported in this mode.
 
-> **Note on transport:** Some MCP servers (like Gitea) use **stdio transport**, which lets you
-> inline `"command": "docker"` directly in your MCP config. The Penpot MCP server uses
-> **HTTP transport** instead, so the container needs to be running first and clients connect
-> via URL.
+## MCP Client Configuration
 
 ### Step 1 — Start the server
 
-Pick one of the options below. The server only needs to be started once — it stays running in the background.
-
-**From Docker Hub (easiest):**
-
 ```bash
-docker run -d \
-  --name penpot-mcp-server \
-  -p 4401:4401 \
-  -p 4402:4402 \
-  -p 4403:4403 \
-  --restart unless-stopped \
-  sebathi/penpot-mcp-docker:latest
-```
-
-**From source (for customization):**
-
-```bash
-git clone https://github.com/sebathi/penpot-mcp-docker.git
-cd penpot-mcp-docker
-cp .env.example .env
 docker compose up -d
 ```
 
-### Step 2 — Configure your MCP client
+### Step 2 — Connect the Penpot plugin
 
-**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+1. Open Penpot in your browser and navigate to a design file
+2. Go to **Plugins → Load from URL**
+3. Enter: `http://localhost:4400/manifest.json`
+4. Open the plugin UI and click **Connect to MCP server**
+5. Keep the plugin window open while working with AI agents
+
+### Step 3 — Configure your MCP client
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
 
 ```json
 {
@@ -203,9 +217,22 @@ claude mcp add penpot --transport http http://localhost:4401/mcp
 }
 ```
 
+**VS Code / Copilot:**
+
+```json
+{
+  "mcpServers": {
+    "penpot": {
+      "transport": "http",
+      "url": "http://localhost:4401/mcp"
+    }
+  }
+}
+```
+
 ### Legacy SSE clients
 
-For clients that don't support Streamable HTTP, use the SSE endpoint instead:
+For clients that don't support Streamable HTTP, use the SSE endpoint:
 
 ```json
 {
@@ -217,17 +244,27 @@ For clients that don't support Streamable HTTP, use the SSE endpoint instead:
 }
 ```
 
+### Using stdio transport (proxy)
+
+For clients that only support stdio, use `mcp-remote` as a proxy:
+
+```bash
+npx -y mcp-remote http://localhost:4401/mcp --allow-http
+```
+
 ## Architecture
 
 The Docker image is built in two stages:
 
-1. **Builder** (`node:22-slim`) — Sparse-clones only the `mcp/` directory from `penpot/penpot`, installs dependencies via pnpm, builds the TypeScript common library and esbuild-bundled server, then assembles a flat production dist.
+1. **Builder** (`node:22-slim`) — Installs `@penpot/mcp` from npm, restores the pnpm lockfile, installs all workspace dependencies, and builds all packages (common types, server, plugin).
 
-2. **Runtime** (`node:22-slim`) — Installs only `dumb-init` for proper signal handling, copies the flat dist, installs production dependencies (including platform-specific `sharp` binaries), and runs as a non-root `penpot` user (UID 1001).
+2. **Runtime** (`node:22-slim`) — Copies the built package from the builder stage, runs as a non-root `penpot` user (UID 1001), and starts both the MCP server and plugin server via the entrypoint script.
+
+This approach avoids cloning the full Penpot repository and builds directly from the published npm package, resulting in faster builds and easier version updates.
 
 ## Health Check
 
-The container includes a built-in health check that verifies the HTTP server is responding:
+The container includes a built-in health check that verifies the MCP HTTP server is responding:
 
 ```bash
 docker inspect --format='{{.State.Health.Status}}' penpot-mcp-server
@@ -244,6 +281,25 @@ docker logs -f penpot-mcp-server
 # Log files on the volume
 docker run --rm -v penpot-mcp_penpot-mcp-logs:/logs alpine ls /logs
 ```
+
+## Troubleshooting
+
+**Plugin won't load in Penpot**
+
+- Verify the plugin server is running: `curl http://localhost:4400/manifest.json`
+- Chromium browsers may block HTTP connections from HTTPS Penpot instances. Use Firefox or serve the plugin over HTTPS via a reverse proxy.
+
+**MCP client can't connect**
+
+- Verify the MCP server is running: `curl http://localhost:4401/mcp`
+- Check container logs: `docker logs penpot-mcp-server`
+- Ensure ports are not blocked by firewall
+
+**Plugin shows "Not connected"**
+
+- Make sure the WebSocket port (4402) is accessible
+- Check that `PENPOT_MCP_SERVER_ADDRESS` matches what the plugin can reach
+- Keep the plugin window open — closing it disconnects the WebSocket
 
 ## License
 

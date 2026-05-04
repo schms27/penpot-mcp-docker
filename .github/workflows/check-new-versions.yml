@@ -1,4 +1,4 @@
-name: Check for New Penpot Versions
+name: Rebuild Docker Image (Nightly)
 
 on:
   schedule:
@@ -7,21 +7,17 @@ on:
 
 env:
   DOCKERHUB_REPO: sebathi/penpot-mcp-docker
-  # Minimum Penpot version that includes MCP support
-  MIN_VERSION: "2.13.1"
 
 jobs:
-  check-and-build:
+  rebuild:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Need full history to read existing tags
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -35,123 +31,19 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Discover Penpot versions with MCP support
-        id: discover
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          # Fetch all stable release tags (X.Y.Z, no RC/pre-release)
-          PENPOT_TAGS=$(git ls-remote --tags https://github.com/penpot/penpot.git \
-            | grep -v '\^{}' \
-            | sed 's|.*refs/tags/||' \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V)
-
-          # Filter tags >= MIN_VERSION
-          ELIGIBLE=""
-          for tag in $PENPOT_TAGS; do
-            if [ "$(printf '%s\n%s' "${MIN_VERSION}" "$tag" | sort -V | head -1)" = "${MIN_VERSION}" ]; then
-              ELIGIBLE="$ELIGIBLE $tag"
-            fi
-          done
-          echo "Eligible versions: $ELIGIBLE"
-
-          # Verify each has mcp/ directory via GitHub API
-          MCP_VERSIONS=""
-          for tag in $ELIGIBLE; do
-            HAS_MCP=$(gh api "repos/penpot/penpot/git/trees/$tag" \
-              --jq '[.tree[].path] | map(select(. == "mcp")) | length' 2>/dev/null || echo "0")
-            if [ "$HAS_MCP" = "1" ]; then
-              MCP_VERSIONS="$MCP_VERSIONS $tag"
-            fi
-          done
-          echo "Versions with MCP: $MCP_VERSIONS"
-
-          # Check which versions we've already tagged in our repo (v* tags)
-          OUR_TAGS=$(git tag -l 'v*' | sed 's/^v//')
-
-          NEW_VERSIONS=""
-          for ver in $MCP_VERSIONS; do
-            if ! echo "$OUR_TAGS" | grep -qx "$ver"; then
-              NEW_VERSIONS="$NEW_VERSIONS $ver"
-            fi
-          done
-
-          LATEST=$(echo "$MCP_VERSIONS" | tr ' ' '\n' | grep -v '^$' | sort -V | tail -1)
-          NEW_TRIMMED=$(echo "$NEW_VERSIONS" | xargs)
-
-          echo "new_versions=$NEW_TRIMMED" >> "$GITHUB_OUTPUT"
-          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "has_new=$( [ -n "$NEW_TRIMMED" ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
-
-          echo "--- Summary ---"
-          echo "New versions to build: ${NEW_TRIMMED:-none}"
-          echo "Latest stable: $LATEST"
-
-      - name: Tag, build, and push new versions
-        if: steps.discover.outputs.has_new == 'true'
-        run: |
-          set -euo pipefail
-          LATEST="${{ steps.discover.outputs.latest }}"
-
-          for VERSION in ${{ steps.discover.outputs.new_versions }}; do
-            echo "=========================================="
-            echo "Building Penpot $VERSION"
-            echo "=========================================="
-
-            # Create git tag on our repo
-            git tag "v${VERSION}" -m "Penpot ${VERSION}"
-            echo "Created tag v${VERSION}"
-
-            MAJOR=$(echo "$VERSION" | cut -d. -f1)
-            MINOR=$(echo "$VERSION" | cut -d. -f1-2)
-
-            TAG_ARGS="--tag ${DOCKERHUB_REPO}:${VERSION}"
-
-            # Add rolling tags only for the latest stable
-            if [ "$VERSION" = "$LATEST" ]; then
-              TAG_ARGS="$TAG_ARGS --tag ${DOCKERHUB_REPO}:${MINOR}"
-              TAG_ARGS="$TAG_ARGS --tag ${DOCKERHUB_REPO}:${MAJOR}"
-              TAG_ARGS="$TAG_ARGS --tag ${DOCKERHUB_REPO}:latest"
-            fi
-
-            docker buildx build \
-              --push \
-              --platform linux/amd64,linux/arm64 \
-              $TAG_ARGS \
-              --build-arg "PENPOT_VERSION=$VERSION" \
-              --cache-from "type=gha,scope=$VERSION" \
-              --cache-to "type=gha,mode=max,scope=$VERSION" \
-              .
-          done
-
-          # Push all new tags to our repo
-          git push origin --tags
-
-      - name: Rebuild develop (nightly)
+      - name: Build and push latest
         run: |
           docker buildx build \
             --push \
             --platform linux/amd64,linux/arm64 \
-            --tag "${DOCKERHUB_REPO}:develop" \
-            --build-arg "PENPOT_VERSION=develop" \
-            --cache-from "type=gha,scope=develop" \
-            --cache-to "type=gha,mode=max,scope=develop" \
+            --tag "${DOCKERHUB_REPO}:latest" \
+            --cache-from "type=gha" \
+            --cache-to "type=gha,mode=max" \
             .
 
       - name: Summary
         if: always()
         run: |
-          echo "### Nightly Version Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Nightly Rebuild" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.discover.outputs.has_new }}" = "true" ]; then
-            echo "**New versions tagged and built:** ${{ steps.discover.outputs.new_versions }}" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No new Penpot versions found." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Latest stable:** ${{ steps.discover.outputs.latest }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**develop** tag rebuilt." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rebuilt **latest** tag from @penpot/mcp@stable." >> "$GITHUB_STEP_SUMMARY"
