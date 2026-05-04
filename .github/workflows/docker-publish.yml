@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  DOCKERHUB_REPO: sebathi/penpot-mcp-docker
+  DOCKERHUB_REPO: schms27/penpot-mcp-docker
 
 jobs:
   build:
