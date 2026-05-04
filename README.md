@@ -1,5 +1,6 @@
 # Penpot MCP Server — Docker
 
+
 Dockerized build of the official [@penpot/mcp](https://www.npmjs.com/package/@penpot/mcp) npm package. Run the Penpot MCP server and plugin server in a single container — designed to integrate directly into your self-hosted Penpot Docker stack.
 
 ## What It Does
