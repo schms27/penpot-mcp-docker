@@ -47,8 +47,7 @@ COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
 # ── Environment defaults ──────────────────────────────────────
-ENV PENPOT_MCP_SERVER_LISTEN_ADDRESS=0.0.0.0
-ENV PENPOT_MCP_SERVER_ADDRESS=localhost
+ENV PENPOT_MCP_SERVER_HOST=0.0.0.0
 ENV PENPOT_MCP_SERVER_PORT=4401
 ENV PENPOT_MCP_WEBSOCKET_PORT=4402
 ENV PENPOT_MCP_REPL_PORT=4403
