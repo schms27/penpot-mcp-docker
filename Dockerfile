@@ -36,9 +36,6 @@ WORKDIR /app
 # Copy entire built package from builder (includes node_modules, dist, static, data)
 COPY --from=builder /build/ .
 
-# Install pnpm in runtime (needed for plugin server)
-RUN corepack enable
-
 # Server resolves data/ and static/ relative to process.cwd()
 RUN ln -s /app/packages/server/dist/data /app/data \
     && ln -s /app/packages/server/dist/static /app/static

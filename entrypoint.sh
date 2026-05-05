@@ -14,7 +14,7 @@ node packages/server/dist/index.js ${MULTI_USER_FLAG} &
 MCP_PID=$!
 
 echo "Starting Penpot Plugin Server on port 4400..."
-cd packages/plugin && node_modules/.bin/vite preview --config vite.config.ts --host 0.0.0.0 &
+node_modules/.bin/vite preview --config packages/plugin/vite.config.ts --host 0.0.0.0 --port 4400 &
 PLUGIN_PID=$!
 
 wait $MCP_PID $PLUGIN_PID

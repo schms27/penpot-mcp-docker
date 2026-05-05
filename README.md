@@ -1,6 +1,5 @@
 # Penpot MCP Server — Docker
 
-
 Dockerized build of the official [@penpot/mcp](https://www.npmjs.com/package/@penpot/mcp) npm package. Run the Penpot MCP server and plugin server in a single container — designed to integrate directly into your self-hosted Penpot Docker stack.
 
 ## What It Does
@@ -14,8 +13,8 @@ The Penpot MCP server exposes [Model Context Protocol](https://modelcontextproto
 - **`import_image`** — Import images into Penpot projects
 
 The container runs **two servers**:
-1. **MCP Server** — handles AI client connections (HTTP/SSE + WebSocket)
-2. **Plugin Server** — serves the MCP plugin to Penpot (`manifest.json`)
+1. **MCP Server** (port 4401) — handles AI client connections
+2. **Plugin Server** (port 4400) — serves the MCP plugin (`manifest.json`) to Penpot
 
 ## How It Works
 
@@ -30,7 +29,7 @@ flowchart LR
     AI -- "HTTP /mcp" --> MCP
     MCP -- "WebSocket" --> WS
     Penpot -- "load plugin" --> Plugin
-    Plugin -- "connects to" --> WS
+    Penpot -- "connects to" --> WS
 ```
 
 **Flow:**
@@ -123,7 +122,7 @@ location /mcp/ {
 }
 ```
 
-Then load the plugin from `https://your-domain/mcp-plugin/manifest.json` and connect your AI client to `https://your-domain/mcp/`.
+Then load the plugin from `https://your-domain/mcp-plugin/manifest.json` and connect your AI client to `https://your-domain/mcp/mcp`.
 
 ## Configuration
 
@@ -259,7 +258,7 @@ The Docker image is built in two stages:
 
 1. **Builder** (`node:22-slim`) — Installs `@penpot/mcp` from npm, restores the pnpm lockfile, installs all workspace dependencies, and builds all packages (common types, server, plugin).
 
-2. **Runtime** (`node:22-slim`) — Copies the built package from the builder stage, runs as a non-root `penpot` user (UID 1001), and starts both the MCP server and plugin server via the entrypoint script.
+2. **Runtime** (`node:22-slim`) — Copies the built package from the builder stage, runs as a non-root `penpot` user (UID 1001), and starts both the MCP server and plugin server via the entrypoint script. The plugin server uses `vite preview` to serve the pre-built plugin files (read-only, no write permissions needed).
 
 This approach avoids cloning the full Penpot repository and builds directly from the published npm package, resulting in faster builds and easier version updates.
 
