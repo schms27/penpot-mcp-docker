@@ -62,7 +62,8 @@ const mime = {
   '.png': 'image/png'
 };
 http.createServer((req, res) => {
-  let file = req.url === '/' ? '/index.html' : req.url;
+  let file = new URL(req.url, 'http://localhost').pathname;
+  file = file === '/' ? '/index.html' : file;
   const fp = path.join(dir, file);
   if (!fs.existsSync(fp)) { res.writeHead(404); res.end('Not found'); return; }
   const ext = path.extname(fp);
